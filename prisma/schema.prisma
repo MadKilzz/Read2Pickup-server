@@ -1,0 +1,437 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                String           @id @unique
+  firstname         String
+  lastname          String
+  email             String           @unique
+  password          String
+  phone             String           @unique
+  phoneVerified     Boolean?         @default(false)
+  gender            GENDER
+  updatedAt         DateTime?        @updatedAt
+  paymentCustomerId String?          @unique
+  role              Role             @default(CUSTOMER)
+  Otp               Otp?
+  Booking           Booking[]
+  Driver            Driver[]
+  BookingDraft      BookingDraft[]
+  DeviceToken       DeviceToken[]
+  CompanyProfile    CompanyProfile[]
+  driverRequests    DriverRequest[]
+
+  @@map("users")
+}
+
+model Otp {
+  id        String   @id
+  code      String
+  isUsed    Boolean  @default(false)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model DeviceToken {
+  id          String    @id
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  deviceToken String
+  platform    String? // "ios" | "android"
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, deviceToken])
+  @@map("device_tokens")
+}
+
+/**
+ * Small-scale caching for external routing (Mapbox Directions).
+ * Keyed by rounded coords + profile; stored in DB to reduce external API calls.
+ */
+model RouteCache {
+  id        String   @id
+  profile   String
+  fromLat   Float
+  fromLng   Float
+  toLat     Float
+  toLng     Float
+  geojson   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([profile, fromLat, fromLng, toLat, toLng])
+  @@map("route_cache")
+}
+
+model CompanyProfile {
+  id          String   @id
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String
+  isDefault   Boolean  @default(false)
+  companyName String
+  vatNumber   String?
+  street      String
+  city        String
+  postalCode  String
+  country     String
+  state       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  BookingDraft BookingDraft[]
+
+  @@unique([userId, label])
+  @@map("company_profiles")
+}
+
+model BookingDraft {
+  id           String  @id
+  userId       String?
+  carTypeId    String?
+  startAddress String
+  startLat     Float
+  startLng     Float
+  endAddress   String
+  endLat       Float
+  endLng       Float
+
+  notes        String?
+  flightNumber String?
+
+  bookingType      String? @default("personal")
+  companyProfileId String?
+
+  distanceMeters  Int
+  durationSeconds Int
+
+  status           DraftStatus @default(PENDING)
+  expiresAt        DateTime
+  paymentSessionId String?     @unique
+
+  bookingTime DateTime
+  updatedAt   DateTime @updatedAt
+
+  user           User?           @relation(fields: [userId], references: [id])
+  CarType        CarType?        @relation(fields: [carTypeId], references: [id])
+  companyProfile CompanyProfile? @relation(fields: [companyProfileId], references: [id])
+
+  @@map("drafts")
+}
+
+enum DraftStatus {
+  PENDING
+  PAYMENT_IN_PROGRESS
+  PAID
+  EXPIRED
+}
+
+model Booking {
+  id     String @id
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  driverId String?
+  driver   Driver? @relation(fields: [driverId], references: [id])
+
+  startAddress    String
+  startLat        Float
+  startLng        Float
+  endAddress      String
+  endLat          Float
+  endLng          Float
+  distanceMeters  Int
+  durationSeconds Int
+
+  notes        String?
+  flightNumber String?
+
+  bookingTime    DateTime
+  assignedAt     DateTime?
+  acceptedAt     DateTime?
+  status         BookingStatus  @default(CONFIRMED)
+  dispatchStatus DispatchStatus @default(PENDING)
+
+  carTypeId String
+  CarType   CarType @relation(fields: [carTypeId], references: [id])
+
+  // 🔑 Financial snapshot
+  price              Float // totaal betaald door klant
+  commissionPlatform Float // platform fee
+  commissionPartner  Float? // partner fee
+  driverPayout       Float // wat chauffeur krijgt
+  partnerId          String?
+  partner            Partner? @relation(fields: [partnerId], references: [id])
+
+  currency String @default("EUR")
+
+  bookingType    String? @default("personal")
+  companyName    String?
+  vatNumber      String?
+  billingAddress String?
+
+  // 🔑 Payment fields
+  paymentIntentId  String?
+  paymentSessionId String?
+  refundId         String?
+  refundedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  DispatchQueue         DispatchQueue[]
+  bookingTrackingEvents BookingTrackingEvent[]
+  driverInvoiceLine     DriverInvoiceLine?
+
+  @@map("bookings")
+}
+
+enum BookingStatus {
+  CONFIRMED
+  COMPLETED
+  CANCELED
+}
+
+enum DispatchStatus {
+  PENDING // nog geen chauffeur toegewezen
+  OFFERING // chauffeurs krijgen offers
+  ASSIGNED // chauffeur accepteerde, maar rit nog niet gestart
+  ON_THE_WAY // chauffeur is onderweg / rit gestart
+  ARRIVED // chauffeur is bij de startlocatie
+  STARTED // chauffeur is begonnen met de rit
+  COMPLETED // rit afgerond
+  NO_DRIVER // geen chauffeur beschikbaar
+  CANCELED // rit geannuleerd operationeel
+  NO_SHOW // Klant is niet op komen dagen/reageert niet op ons
+}
+
+model BookingTrackingEvent {
+  id        String            @id @unique
+  bookingId String
+  booking   Booking           @relation(fields: [bookingId], references: [id])
+  eventType TrackingEventType
+  timestamp DateTime          @default(now())
+  latitude  Float?
+  longitude Float?
+
+  @@map("booking_tracking_events")
+}
+
+enum TrackingEventType {
+  ON_THE_WAY
+  ARRIVED
+  STARTED
+  COMPLETED
+}
+
+model Driver {
+  id                  String       @id @unique
+  user                User         @relation(fields: [id], references: [id])
+  status              DriverStatus @default(OFFLINE)
+  lastCompletedRideAt DateTime?
+  locationLat         Float?
+  locationLng         Float?
+  locationH3Index     String?
+  locationUpdatedAt   DateTime?
+  CarType             CarType?     @relation(fields: [carTypeId], references: [id])
+  carTypeId           String?
+
+  companyName        String?
+  companyAddress     String?
+  companyCity        String?
+  companyPostcode    String?
+  registrationNumber String?
+  vatNumber          String?
+  bankAccountHolder  String?
+  iban               String?
+
+  Booking       Booking[]
+  DispatchQueue DispatchQueue[]
+  DriverInvoice DriverInvoice[]
+
+  @@map("drivers")
+}
+
+model DriverInvoice {
+  id            String              @id @default(cuid()) // of uuid(), net als je andere modellen
+  driverId      String
+  driver        Driver              @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  // Periode: welke week
+  year          Int // bijv. 2025
+  weekNumber    Int // 1-53 (ISO week)
+  periodStart   DateTime // maandag 00:00 van die week (handig voor queries)
+  periodEnd     DateTime // zondag 23:59
+  // Bedragen (in EUR)
+  subtotal      Float // som driverPayout (excl. BTW)
+  vatRate       Float               @default(0.09)
+  vatAmount     Float
+  total         Float // subtotal + vatAmount
+  // Administratie
+  invoiceNumber String              @unique // bijv. "DRV-2025-0042"
+  status        DriverInvoiceStatus @default(GENERATED)
+  createdAt     DateTime            @default(now())
+  paidAt        DateTime?
+  lines         DriverInvoiceLine[]
+
+  @@unique([driverId, year, weekNumber]) // één factuur per chauffeur per week
+  @@map("driver_invoices")
+}
+
+enum DriverInvoiceStatus {
+  DRAFT
+  GENERATED
+  SENT
+  PAID
+}
+
+model DriverInvoiceLine {
+  id              String        @id @default(cuid())
+  driverInvoiceId String
+  driverInvoice   DriverInvoice @relation(fields: [driverInvoiceId], references: [id], onDelete: Cascade)
+  bookingId       String        @unique // één regel per booking
+  booking         Booking       @relation(fields: [bookingId], references: [id])
+  description     String // bijv. "Rit 12 mrt 2025 - Schiphol → Amsterdam"
+  amount          Float // driverPayout van die rit
+  bookingDate     DateTime // bookingTime van de rit
+
+  @@map("driver_invoice_lines")
+}
+
+model DriverRequest {
+  id                 String              @id
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Bedrijfsgegevens (zoals in je form)
+  companyName        String
+  companyAddress     String
+  companyCity        String
+  companyPostcode    String
+  registrationNumber String
+  vatNumber          String
+  
+  // Bank
+  bankAccountHolder  String
+  iban               String
+  message            String?             @db.Text
+  status             DriverRequestStatus @default(PENDING)
+  rejectedReason     String?             @db.Text
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@map("driver_requests")
+}
+
+enum DriverRequestStatus {
+  PENDING // nieuw, nog niet bekeken
+  APPROVED // goedgekeurd, driver kan worden aangemaakt
+  REJECTED // afgewezen
+}
+
+model Partner {
+  id            String      @id @unique
+  name          String
+  type          PartnerType
+  commissionPct Float       @default(0.05)
+  contactEmail  String
+  bookings      Booking[]
+  createdAt     DateTime    @default(now())
+
+  @@map("partners")
+}
+
+model DispatchQueue {
+  id          String      @id @unique
+  driverId    String
+  driver      Driver      @relation(fields: [driverId], references: [id])
+  bookingId   String
+  booking     Booking     @relation(fields: [bookingId], references: [id])
+  status      QueueStatus @default(PENDING)
+  offeredAt   DateTime    @default(now())
+  respondedAt DateTime?
+
+  @@unique([bookingId, driverId])
+  @@map("dispatch_queue")
+}
+
+enum QueueStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+model CarType {
+  id          String @id @unique
+  name        String
+  description String
+  imageUrl    String
+  seats       Int
+  luggage     Int
+  pricePerKm  Float
+  pricePerMin Float
+  baseFare    Float
+
+  minimumReservationFare Float @default(25) // <-- NIEUW
+  shortReservationKm     Float @default(7) // <-- optioneel
+  longRideNoTimeKm       Float @default(20) // <-- optioneel
+
+  isActive Boolean @default(false)
+
+  drivers      Driver[]
+  bookings     Booking[]
+  BookingDraft BookingDraft[]
+
+  @@map("cartypes")
+}
+
+model PlaceCache {
+  placeId    String   @id // Gebruik Google place_id als primaire key
+  name       String
+  street     String?
+  city       String?
+  postal     String?
+  country    String?
+  lat        Float?
+  lng        Float?
+  categories String? // JSON-string van categories
+  tag        String?
+  createdAt  DateTime @default(now())
+
+  @@index([street])
+  @@index([city])
+  @@index([name])
+  @@map("places")
+}
+
+enum PartnerType {
+  TRAVEL_AGENCY
+  COMPANY
+}
+
+enum Role {
+  CUSTOMER
+  DRIVER
+  DISPATCHER
+  ADMIN
+}
+
+enum GENDER {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum DriverStatus {
+  OFFLINE
+  AVAILABLE
+  ON_BOOKING
+}
