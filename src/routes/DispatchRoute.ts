@@ -11,6 +11,9 @@ import {
     cancelOfferValidationSchema,
     rejectDriverRequestValidationSchema,
     acceptDriverRequestValidationSchema,
+    dispatchDriversQueryValidationSchema,
+    dispatchBookingsQueryValidationSchema,
+    dispatchDriverRequestsQueryValidationSchema,
 } from "@/validation/dispatch";
 
 export default class DispatchRoute extends Route {
@@ -48,7 +51,7 @@ export default class DispatchRoute extends Route {
             "/dashboard-stats",
             [
                 this.authMiddelware.requireDispatchAuth,
-                this.authMiddelware.requireRoles([Role.DISPATCHER, Role.ADMIN]),
+                this.authMiddelware.requireRoles([Role.ADMIN]),
             ],
             this.controller.getDashboardStats.bind(this.controller)
         );
@@ -58,6 +61,7 @@ export default class DispatchRoute extends Route {
             [
                 this.authMiddelware.requireDispatchAuth,
                 this.authMiddelware.requireRoles([Role.DISPATCHER, Role.ADMIN]),
+                this.formMiddelware.validateQuery(dispatchBookingsQueryValidationSchema),
             ],
             this.controller.getBookings.bind(this.controller)
         );
@@ -76,6 +80,7 @@ export default class DispatchRoute extends Route {
             [
                 this.authMiddelware.requireDispatchAuth,
                 this.authMiddelware.requireRoles([Role.DISPATCHER, Role.ADMIN]),
+                this.formMiddelware.validateQuery(dispatchDriversQueryValidationSchema),
             ],
             this.controller.getDrivers.bind(this.controller)
         );
@@ -88,6 +93,15 @@ export default class DispatchRoute extends Route {
                 this.formMiddelware.validateForm(reassignValidationSchema),
             ],
             this.controller.reassignBooking.bind(this.controller)
+        );
+
+        this.router.post(
+            "/bookings/:id/unassign",
+            [
+                this.authMiddelware.requireDispatchAuth,
+                this.authMiddelware.requireRoles([Role.DISPATCHER, Role.ADMIN]),
+            ],
+            this.controller.unassignCurrentDriver.bind(this.controller)
         );
 
         this.router.patch(
@@ -125,6 +139,7 @@ export default class DispatchRoute extends Route {
             [
                 this.authMiddelware.requireDispatchAuth,
                 this.authMiddelware.requireRoles([Role.DISPATCHER, Role.ADMIN]),
+                this.formMiddelware.validateQuery(dispatchDriverRequestsQueryValidationSchema),
             ],
             this.controller.getDriverRequests.bind(this.controller)
         );

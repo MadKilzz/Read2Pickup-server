@@ -40,6 +40,10 @@ const errors: { [k: string]: ErrorItem } = {
         status: 404,
         message: "The requested company profile could not be found."
     },
+    COMPANY_PROFILE_ALREADY_EXISTS: {
+        status: 400,
+        message: "A company profile with this label or company name already exists."
+    },
     BOOKING_NOT_FOUND: {
         status: 404,
         message: "The requested booking could not be found."
@@ -140,9 +144,17 @@ const errors: { [k: string]: ErrorItem } = {
         status: 400,
         message: "This status transition is not allowed."
     },
+    DISPATCH_PATCH_NO_SHOW_ONLY: {
+        status: 400,
+        message: "Dispatch may only mark no-show here. Cancellation is done by the passenger."
+    },
     REASSIGN_NOT_ALLOWED: {
         status: 400,
         message: "Reassign is not allowed for this booking status."
+    },
+    NO_DRIVER_ASSIGNED: {
+        status: 400,
+        message: "No driver is currently assigned to this booking."
     },
     DRIVER_NOT_FOUND: {
         status: 404,

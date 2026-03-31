@@ -16,6 +16,9 @@ This project uses Zod for request validation.
 Always use Zod schemas for validating request data.
 Do not introduce other validation libraries.
 Follow the existing Zod validation pattern used in the project (controller or middleware).
+- For controller endpoints, use `ValidatedRequest<T>` with typed `validatedBody` / `validatedQuery`.
+- Register schemas in routes via `formMiddelware.validateForm(...)` or `formMiddelware.validateQuery(...)`.
+- In controllers, always handle `req.validationErrors` first and return `ApiError("INCORRECT_BODY")` when present.
 
 Error handling:
 Use async/await.

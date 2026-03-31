@@ -481,6 +481,15 @@ export default class BillingController extends Controller {
 
             const data: CreateCompanyProfileData = req.validatedBody!;
 
+            const conflict = await this.companyProfileService.findFirst({
+                where: {
+                  userId,
+                  OR: [{ label: data.label }, { companyName: data.companyName }],
+                },
+              });
+
+            if (conflict) return new this.ApiError("COMPANY_PROFILE_ALREADY_EXISTS").send(res);
+
             if (data.isDefault) {
                 const profiles = await this.companyProfileService.findMany({ where: { userId } });
                 await Promise.all(

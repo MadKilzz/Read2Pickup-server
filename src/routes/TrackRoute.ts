@@ -6,6 +6,7 @@ export default class TrackRoute extends Route {
 
     constructor() {
         super();
+
         this.router.get(
             "/:id",
             [this.authMiddelware.requireAuth],

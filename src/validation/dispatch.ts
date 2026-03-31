@@ -1,4 +1,5 @@
 import z from "zod";
+import { DispatchStatus, DriverRequestStatus } from "@prisma/client";
 
 export const reassignValidationSchema = z.object({
     driverId: z.string().min(1, "driverId is required"),
@@ -18,7 +19,8 @@ export const cancelOfferValidationSchema = z.object({
 
 export type CancelOfferData = z.infer<typeof cancelOfferValidationSchema>;
 
-const DISPATCHER_DISPATCH_STATUSES = ["NO_SHOW", "CANCELED"] as const;
+/** Dispatcher may not set CANCELED; only the passenger cancels via customer API. */
+const DISPATCHER_DISPATCH_STATUSES = ["NO_SHOW"] as const;
 
 export const dispatcherDispatchStatusValidationSchema = z.object({
     dispatchStatus: z.enum(DISPATCHER_DISPATCH_STATUSES),
@@ -37,3 +39,31 @@ export const acceptDriverRequestValidationSchema = z.object({
 });
 
 export type AcceptDriverRequestData = z.infer<typeof acceptDriverRequestValidationSchema>;
+
+export const dispatchDriversQueryValidationSchema = z.object({
+    bookingId: z.string().min(1, "bookingId is required"),
+    availableOnly: z.enum(["true", "false"]).optional(),
+    search: z.string().optional(),
+    mode: z.enum(["default", "nearest"]).optional(),
+    limit: z.coerce.number().int().min(1).max(25).optional(),
+});
+
+export type DispatchDriversQueryData = z.infer<typeof dispatchDriversQueryValidationSchema>;
+
+export const dispatchBookingsQueryValidationSchema = z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    date: z.string().optional(),
+    dispatchStatus: z.nativeEnum(DispatchStatus).optional(),
+});
+
+export type DispatchBookingsQueryData = z.infer<typeof dispatchBookingsQueryValidationSchema>;
+
+export const dispatchDriverRequestsQueryValidationSchema = z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(20).optional(),
+    search: z.string().optional(),
+    status: z.nativeEnum(DriverRequestStatus).optional(),
+});
+
+export type DispatchDriverRequestsQueryData = z.infer<typeof dispatchDriverRequestsQueryValidationSchema>;

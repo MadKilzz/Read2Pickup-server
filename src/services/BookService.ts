@@ -1,4 +1,12 @@
-import { BookingStatus, DispatchStatus, Prisma, PrismaClient, QueueStatus, User } from "@prisma/client";
+import {
+    BookingStatus,
+    DispatchStatus,
+    DriverStatus,
+    Prisma,
+    PrismaClient,
+    QueueStatus,
+    User,
+} from "@prisma/client";
 import axios from "axios";
 import Service from "./Service";
 
@@ -236,24 +244,51 @@ export default class BookService extends Service {
     }
 
     /**
-     * Cancel a booking and remove it from the dispatch queue in one transaction.
-     * Lock order: queue first, then booking (matches acceptOffer to avoid deadlock).
-     * The customer may always cancel, including when the ride is already assigned to a driver.
+     * Passenger cancel: queue laten verlopen, boeking eerst CANCELED + driverId weg, daarna chauffeur AVAILABLE.
      */
     public async cancelBookingAtomic(bookingId: string): Promise<void> {
         await this.transaction(async (tx) => {
             const now = new Date();
+            const b = await tx.booking.findFirst({
+                where: { id: bookingId },
+                select: { driverId: true },
+            });
+            if (!b) return;
+
             await tx.dispatchQueue.updateMany({
                 where: { bookingId, status: QueueStatus.PENDING },
                 data: { status: QueueStatus.EXPIRED, respondedAt: now },
             });
+
+            if (b.driverId) {
+                await tx.dispatchQueue.updateMany({
+                    where: {
+                        bookingId,
+                        driverId: b.driverId,
+                        status: QueueStatus.ACCEPTED,
+                    },
+                    data: { status: QueueStatus.EXPIRED, respondedAt: now },
+                });
+            }
+
+            // Eerst boeking ontkoppelen/annuleren, daarna chauffeur vrij (race met driver PATCH).
             await tx.booking.updateMany({
                 where: { id: bookingId, status: { not: BookingStatus.CANCELED } },
                 data: {
                     status: BookingStatus.CANCELED,
                     dispatchStatus: DispatchStatus.CANCELED,
+                    driverId: null,
+                    assignedAt: null,
+                    acceptedAt: null,
                 },
             });
+
+            if (b.driverId) {
+                await tx.driver.update({
+                    where: { id: b.driverId },
+                    data: { status: DriverStatus.AVAILABLE },
+                });
+            }
         });
     }
 

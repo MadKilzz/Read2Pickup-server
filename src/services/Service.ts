@@ -1,5 +1,11 @@
 import { PrismaClient } from '@/utils/database';
-import type { PrismaClient as IPrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient as IPrismaClient } from '@prisma/client';
+
+export type ServiceTransactionOptions = {
+    isolationLevel?: Prisma.TransactionIsolationLevel;
+    maxWait?: number;
+    timeout?: number;
+};
 
 class Service {
   /**
@@ -10,13 +16,17 @@ class Service {
   }
 
   /**
-   * Transaction helper
+   * Transaction helper (optioneel isolationLevel / timeouts, zelfde client als elders).
    */
-  protected async transaction<T>(callback: (tx: IPrismaClient) => Promise<T>): Promise<T> {
-    return await this.prisma.$transaction(async (tx) => {
-      // cast zodat TS begrijpt dat tx een volledige Prisma client is
-      return await callback(tx as IPrismaClient);
-    });
+  protected async transaction<T>(
+    callback: (tx: IPrismaClient) => Promise<T>,
+    options?: ServiceTransactionOptions
+  ): Promise<T> {
+    const run = async (tx: unknown) => callback(tx as IPrismaClient);
+    if (options) {
+      return await this.prisma.$transaction(run, options);
+    }
+    return await this.prisma.$transaction(run);
   }
 }
 

@@ -100,6 +100,14 @@ app.get("/api/health", (req: Request, res: Response) => {
   });
 });
 
+app.use((req: Request, res: Response) => {
+  return res.status(404).json({
+    status: 404,
+    error: "NOT_FOUND",
+    message: "The requested resource was not found.",
+  });
+});
+
 // -------------------- HTTP server + Socket.IO --------------------
 const httpServer = http.createServer(app);
 initSocket(httpServer);

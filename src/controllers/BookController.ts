@@ -47,6 +47,7 @@ export default class BookController extends Controller {
                     endAddress: true,
                     bookingTime: true,
                     status: true,
+                    dispatchStatus: true,
                     price: true,
                     flightNumber: true,
                     notes: true,
@@ -208,13 +209,17 @@ export default class BookController extends Controller {
 
             const [upcoming, past, canceled] = await Promise.all([
                 this.bookService.fetchBookingCount({
-                    where: { userId, bookingTime: { gte: now }, status: { not: BookingStatus.CANCELED } }
+                    where: {
+                        userId,
+                        bookingTime: { gte: now },
+                        status: { notIn: [BookingStatus.CANCELED, BookingStatus.NO_SHOW] },
+                    },
                 }),
                 this.bookService.fetchBookingCount({
-                    where: { userId, bookingTime: { lte: gracePeriod }, status: BookingStatus.COMPLETED }
+                    where: { userId, bookingTime: { lte: gracePeriod }, status: BookingStatus.COMPLETED },
                 }),
                 this.bookService.fetchBookingCount({
-                    where: { userId, status: BookingStatus.CANCELED }
+                    where: { userId, status: { in: [BookingStatus.CANCELED, BookingStatus.NO_SHOW] } },
                 }),
             ]);
 
@@ -239,10 +244,22 @@ export default class BookController extends Controller {
             const skip = (page - 1) * limit;
 
             // Filters from query
-            const { status, carType, search } = req.query as {
+            const { status, carType, search, dateFrom, dateTo } = req.query as {
                 status?: string
                 carType?: string
                 search?: string
+                dateFrom?: string
+                dateTo?: string
+            };
+
+            const isoDateRe = /^\d{4}-\d{2}-\d{2}$/;
+            const parseLocalDayStart = (iso: string) => {
+                const [y, m, d] = iso.split('-').map(Number);
+                return new Date(y, m - 1, d, 0, 0, 0, 0);
+            };
+            const parseLocalDayEnd = (iso: string) => {
+                const [y, m, d] = iso.split('-').map(Number);
+                return new Date(y, m - 1, d, 23, 59, 59, 999);
             };
 
             // Build Prisma where clause dynamically
@@ -250,6 +267,14 @@ export default class BookController extends Controller {
 
             if (status) where.status = status.toUpperCase();
             if (carType) where.CarType = { name: carType };
+            if (dateFrom && isoDateRe.test(dateFrom) && dateTo && isoDateRe.test(dateTo)) {
+                const fromStr = dateFrom <= dateTo ? dateFrom : dateTo;
+                const toStr = dateFrom <= dateTo ? dateTo : dateFrom;
+                where.bookingTime = {
+                    gte: parseLocalDayStart(fromStr),
+                    lte: parseLocalDayEnd(toStr),
+                };
+            }
             if (search) {
                 where.OR = [
                     { id: { contains: search, mode: 'insensitive' } },
@@ -271,12 +296,13 @@ export default class BookController extends Controller {
                     endAddress: true,
                     bookingTime: true,
                     status: true,
+                    dispatchStatus: true,
                     price: true,
                     flightNumber: true,
                     notes: true,
                     CarType: { select: { name: true } },
                 },
-                orderBy: { bookingTime: 'asc' },
+                orderBy: { bookingTime: 'desc' },
                 skip,
                 take: limit,
             });
@@ -307,6 +333,7 @@ export default class BookController extends Controller {
             if (!booking) return new this.ApiError('BOOKING_NOT_FOUND').send(res);
 
             if (booking.status === BookingStatus.CANCELED) return new this.ApiError('BOOKING_ALREADY_CANCELED').send(res);
+            if (booking.status === BookingStatus.NO_SHOW) return new this.ApiError('REQUEST_NOT_ALLOWED').send(res);
 
             const now = new Date();
             const bookingTime = new Date(booking.bookingTime);
@@ -682,7 +709,8 @@ export default class BookController extends Controller {
             });
 
             if (!booking) return new this.ApiError('BOOKING_NOT_FOUND').send(res);
-            if (booking.status === BookingStatus.CANCELED) return new this.ApiError('REQUEST_NOT_ALLOWED').send(res);
+            if (booking.status === BookingStatus.CANCELED || booking.status === BookingStatus.NO_SHOW)
+                return new this.ApiError('REQUEST_NOT_ALLOWED').send(res);
 
             const currentNotes = (booking.notes ?? "").trim();
             const newNotes = notes.trim();

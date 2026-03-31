@@ -44,6 +44,13 @@ export default {
     booking: {
         minHoursAhead: Math.max(0, Number(process.env.MIN_BOOKING_HOURS_AHEAD) || 1),
     },
+    /** Geo dispatch tuning: shared H3 settings for driver location + nearest-driver lookup. */
+    geo: {
+        /** H3 resolution used when storing driver location cells. Must match nearest lookup. */
+        h3Resolution: Math.min(12, Math.max(0, Number(process.env.H3_RESOLUTION) || 9)),
+        /** Max H3 ring distance for nearest-driver shortlist around pickup. */
+        nearestMaxRing: Math.min(20, Math.max(1, Number(process.env.NEAREST_MAX_RING) || 6)),
+    },
     /** Invoice PDF: company details (rechtsboven op factuur). Optioneel via env. */
     invoice: {
         companyName: process.env.INVOICE_COMPANY_NAME || "Ready2Pickup",

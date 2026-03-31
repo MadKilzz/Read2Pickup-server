@@ -1,10 +1,20 @@
 import { latLngToCell } from "h3-js";
-import { BookingStatus, DriverRequestStatus, DispatchStatus, DriverStatus, Prisma, QueueStatus, Role, TrackingEventType } from "@prisma/client";
+import {
+    BookingStatus,
+    DriverRequestStatus,
+    DispatchStatus,
+    DriverStatus,
+    Prisma,
+    QueueStatus,
+    Role,
+    TrackingEventType,
+} from "@prisma/client";
 import Service from "./Service";
 import { DriverLocationData, DriverStatusData, type DispatchStatusLocation, type DriverRequestData } from "@/validation/driver";
 import { emitTrackingEvent } from "@/socket";
 import BookingTrackingEventService from "./BookingTrackingEventService";
 import Snowflake from "@/utils/SnowFlake";
+import config from "@/config";
 
 const DISPATCH_STATUS_TO_TRACKING_EVENT: Partial<Record<DispatchStatus, TrackingEventType>> = {
     [DispatchStatus.ON_THE_WAY]: TrackingEventType.ON_THE_WAY,
@@ -12,8 +22,6 @@ const DISPATCH_STATUS_TO_TRACKING_EVENT: Partial<Record<DispatchStatus, Tracking
     [DispatchStatus.STARTED]: TrackingEventType.STARTED,
     [DispatchStatus.COMPLETED]: TrackingEventType.COMPLETED,
 };
-
-const H3_RESOLUTION = 9; // street-level
 
 export default class DriverService extends Service {
     private bookingTrackingEventService = new BookingTrackingEventService();
@@ -33,8 +41,38 @@ export default class DriverService extends Service {
         }
     }
 
+    /**
+     * Zet chauffeur op ON_BOOKING alleen als de rit nog CONFIRMED + ON_THE_WAY is (ivm annulering vs late PATCH).
+     */
+    public async setDriverOnBookingIfRideStillActive(driverId: string, bookingId: string): Promise<void> {
+        try {
+            await this.transaction(
+                async (tx) => {
+                    const booking = await tx.booking.findFirst({
+                        where: {
+                            id: bookingId,
+                            driverId,
+                            status: BookingStatus.CONFIRMED,
+                            dispatchStatus: DispatchStatus.ON_THE_WAY,
+                        },
+                        select: { id: true },
+                    });
+                    if (!booking) return;
+                    await tx.driver.update({
+                        where: { id: driverId },
+                        data: { status: DriverStatus.ON_BOOKING },
+                    });
+                },
+                { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+            );
+        } catch (e) {
+            if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2034") return;
+            throw e;
+        }
+    }
+
     public async updateLocation(driverId: string, data: DriverLocationData) {
-        const h3Index = latLngToCell(data.latitude, data.longitude, H3_RESOLUTION);
+        const h3Index = latLngToCell(data.latitude, data.longitude, config.geo.h3Resolution);
         return await this.prisma.driver.update({
             where: { id: driverId },
             data: {
@@ -149,14 +187,17 @@ export default class DriverService extends Service {
             DispatchStatus.ARRIVED,
             DispatchStatus.STARTED,
         ];
-        const statuses = filter === "all" ? [...statusesUpcoming, DispatchStatus.COMPLETED] : statusesUpcoming;
+        const statuses =
+            filter === "all"
+                ? [...statusesUpcoming, DispatchStatus.COMPLETED, DispatchStatus.NO_SHOW]
+                : statusesUpcoming;
         return await this.prisma.booking.findMany({
             where: { driverId, dispatchStatus: { in: statuses } },
             include: {
                 CarType: { select: { name: true } },
                 user: { select: { firstname: true, lastname: true, gender: true, phone: true } },
             },
-            orderBy: { bookingTime: "asc" },
+            orderBy: { bookingTime: "desc" },
         });
     }
 

@@ -11,6 +11,9 @@ import type {
     CancelOfferData,
     RejectDriverRequestData,
     AcceptDriverRequestData,
+    DispatchDriversQueryData,
+    DispatchBookingsQueryData,
+    DispatchDriverRequestsQueryData,
 } from "@/validation/dispatch";
 
 const dispatchSelect = {
@@ -24,11 +27,12 @@ const dispatchSelect = {
     price: true,
     flightNumber: true,
     notes: true,
+    createdAt: true,
     CarType: { select: { name: true } },
     driver: {
         select: {
             id: true,
-            user: { select: { email: true, firstname: true, lastname: true } },
+            user: { select: { email: true, firstname: true, lastname: true, phone: true } },
         },
     },
 };
@@ -37,12 +41,13 @@ export default class DispatchController extends Controller {
     private dispatchService: DispatchService = new DispatchService();
     private driverService: DriverService = new DriverService();
 
-    public async getBookings(req: Request, res: Response) {
+    public async getBookings(req: ValidatedRequest<DispatchBookingsQueryData>, res: Response) {
         try {
-            const page = Number(req.query.page) || 1;
-            const limit = Number(req.query.limit) || 20;
+            if (req.validationErrors) return new this.ApiError("INCORRECT_BODY").send(res);
+            const { page: qpPage, limit: qpLimit, date, dispatchStatus } = req.validatedQuery!;
+            const page = qpPage || 1;
+            const limit = qpLimit || 20;
             const skip = (page - 1) * limit;
-            const { date, dispatchStatus } = req.query as { date?: string; dispatchStatus?: string };
 
             const where: Record<string, unknown> = {};
 
@@ -57,7 +62,7 @@ export default class DispatchController extends Controller {
                 };
             }
 
-            if (dispatchStatus && Object.values(DispatchStatus).includes(dispatchStatus as DispatchStatus)) {
+            if (dispatchStatus) {
                 where.dispatchStatus = dispatchStatus;
             }
 
@@ -93,7 +98,30 @@ export default class DispatchController extends Controller {
                 where: { id },
                 select: {
                     ...dispatchSelect,
-                    user: { select: { id: true, email: true } },
+                    // Extra fields for `BookingDetail`: map markers + customer contact.
+                    startLat: true,
+                    startLng: true,
+                    endLat: true,
+                    endLng: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            firstname: true,
+                            lastname: true,
+                            phone: true,
+                        },
+                    },
+                    // Actual tracking events with (optional) geo coordinates.
+                    bookingTrackingEvents: {
+                        orderBy: { timestamp: "asc" },
+                        select: {
+                            eventType: true,
+                            timestamp: true,
+                            latitude: true,
+                            longitude: true,
+                        },
+                    },
                     DispatchQueue: {
                         select: {
                             id: true,
@@ -103,7 +131,7 @@ export default class DispatchController extends Controller {
                             driver: {
                                 select: {
                                     id: true,
-                                    user: { select: { email: true, firstname: true, lastname: true } },
+                                    user: { select: { email: true, firstname: true, lastname: true, phone: true } },
                                 },
                             },
                         },
@@ -124,21 +152,29 @@ export default class DispatchController extends Controller {
         }
     }
 
-    public async getDrivers(req: Request, res: Response) {
+    public async getDrivers(req: ValidatedRequest<DispatchDriversQueryData>, res: Response) {
         try {
-            const { carTypeId, availableOnly, search } = req.query as {
-                carTypeId?: string;
-                availableOnly?: string;
-                search?: string;
-            };
+            if (req.validationErrors) return new this.ApiError("INCORRECT_BODY").send(res);
+
+            const { availableOnly, search, mode, limit, bookingId } = req.validatedQuery!;
+
             const drivers = await this.dispatchService.fetchDriversForDispatch({
-                carTypeId: carTypeId || undefined,
                 availableOnly: availableOnly === "true",
                 search: search || undefined,
+                mode: mode ?? "default",
+                limit: limit ?? undefined,
+                bookingId,
             });
-            return res.json({ code: 200, message: null, drivers });
+
+            return res.json({ code: 200, data: drivers });
         } catch (e) {
             this.logger.error(e);
+            if (e instanceof Error) {
+                if (e.message === "BOOKING_NOT_FOUND")
+                    return new this.ApiError("BOOKING_NOT_FOUND").send(res);
+                if (e.message === "BOOKING_CAR_TYPE_MISSING")
+                    return new this.ApiError("DRIVER_CAR_TYPE_MISMATCH").send(res);
+            }
             return new this.ApiError("UNKNOWN_ERROR").send(res);
         }
     }
@@ -174,6 +210,26 @@ export default class DispatchController extends Controller {
         }
     }
 
+    public async unassignCurrentDriver(req: Request, res: Response) {
+        try {
+            const bookingId = req.params.id;
+            if (!bookingId) return new this.ApiError("MISSING_BOOKING_ID").send(res);
+            await this.dispatchService.unassignCurrentDriver(bookingId);
+            return res.status(204).send();
+        } catch (e) {
+            this.logger.error(e);
+            if (e instanceof Error) {
+                if (e.message === "BOOKING_NOT_FOUND")
+                    return new this.ApiError("BOOKING_NOT_FOUND").send(res);
+                if (e.message === "REASSIGN_NOT_ALLOWED")
+                    return new this.ApiError("REASSIGN_NOT_ALLOWED").send(res);
+                if (e.message === "NO_DRIVER_ASSIGNED")
+                    return new this.ApiError("NO_DRIVER_ASSIGNED").send(res);
+            }
+            return new this.ApiError("UNKNOWN_ERROR").send(res);
+        }
+    }
+
     public async patchDispatchStatus(req: ValidatedRequest<DispatcherDispatchStatusData>, res: Response) {
         try {
             const bookingId = req.params.id;
@@ -191,6 +247,8 @@ export default class DispatchController extends Controller {
                     return new this.ApiError("BOOKING_NOT_FOUND").send(res);
                 if (e.message === "INVALID_DISPATCH_STATUS_TRANSITION")
                     return new this.ApiError("INVALID_DISPATCH_STATUS_TRANSITION").send(res);
+                if (e.message === "DISPATCH_PATCH_NO_SHOW_ONLY")
+                    return new this.ApiError("DISPATCH_PATCH_NO_SHOW_ONLY").send(res);
             }
             return new this.ApiError("UNKNOWN_ERROR").send(res);
         }
@@ -241,18 +299,18 @@ export default class DispatchController extends Controller {
     }
 
     /** List driver requests for dispatch panel (paginated, max 5 per page default). */
-    public async getDriverRequests(req: Request, res: Response) {
+    public async getDriverRequests(req: ValidatedRequest<DispatchDriverRequestsQueryData>, res: Response) {
         try {
-            const page = Number(req.query.page) || 1;
-            const limit = Math.min(Number(req.query.limit) || 5, 20);
-            const search = (req.query.search as string) || undefined;
-            const status = (req.query.status as string) || undefined;
+            if (req.validationErrors) return new this.ApiError("INCORRECT_BODY").send(res);
+            const { page: qpPage, limit: qpLimit, search, status } = req.validatedQuery!;
+            const page = qpPage || 1;
+            const limit = qpLimit || 5;
 
             const { items, totalCount } = await this.driverService.listDriverRequestsForDispatch({
                 page,
                 limit,
                 search: search?.trim() || undefined,
-                status: status && Object.values(DriverRequestStatus).includes(status as DriverRequestStatus) ? (status as DriverRequestStatus) : undefined,
+                status: status || undefined,
             });
 
             const totalPages = Math.ceil(totalCount / limit);

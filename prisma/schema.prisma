@@ -90,6 +90,7 @@ model CompanyProfile {
   BookingDraft BookingDraft[]
 
   @@unique([userId, label])
+  @@unique([userId, companyName])
   @@map("company_profiles")
 }
 
@@ -198,6 +199,7 @@ enum BookingStatus {
   CONFIRMED
   COMPLETED
   CANCELED
+  NO_SHOW
 }
 
 enum DispatchStatus {

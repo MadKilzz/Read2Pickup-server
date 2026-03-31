@@ -277,10 +277,7 @@ export default class DriverController extends Controller {
             await this.driverService.updateBookingDispatchStatus(bookingId, user.id, newStatus, location);
 
             if (newStatus === DispatchStatus.ON_THE_WAY) {
-                await this.driverService.update({
-                    where: { id: user.id },
-                    data: { status: DriverStatus.ON_BOOKING },
-                });
+                await this.driverService.setDriverOnBookingIfRideStillActive(user.id, bookingId);
                 const bookingWithUser = await this.driverService.getBookingWithUser(bookingId, user.id);
                 if (bookingWithUser?.user?.email) {
                     const trackUrl = `${config.app.url}/track/${bookingId}`;

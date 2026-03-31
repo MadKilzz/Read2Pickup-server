@@ -1,34 +1,45 @@
 import { PrismaClient } from "@prisma/client";
+import SnowFlake from "../src/utils/SnowFlake";
+
+// `prisma/seed.ts` valt buiten de reguliere `tsconfig.json` include,
+// waardoor TS-lints soms geen Node `process` types meenemen.
+declare const process: {
+  env: Record<string, string | undefined>;
+  exit: (code?: number) => void;
+};
 
 const prisma = new PrismaClient();
 
-/** Standaard CarTypes: Comfort en Van met reserveringsopties. */
-const CAR_TYPES = [
+type CarTypeSeed = Omit<
+  Parameters<typeof prisma.carType.create>[0]["data"],
+  "id"
+> & { id?: never };
+
+/** CarTypes: Standard en Van. `imageUrl` moet overeenkomen met `/classes/${imageUrl}` in de frontend. */
+const CAR_TYPES: CarTypeSeed[] = [
   {
-    id: "10000000000000001",
-    name: "Comfort",
-    description: "Comfort personenauto, reserveringstarief.",
-    imageUrl: "/images/car.svg",
+    name: "Standard",
+    description: "Daily use - Volkswagen Passat or similar",
+    imageUrl: "r2p-comfort-class.png",
     seats: 4,
-    luggage: 2,
-    baseFare: 4.31,
+    luggage: 3,
     pricePerKm: 2.5,
     pricePerMin: 0.52,
+    baseFare: 4.31,
     minimumReservationFare: 25,
     shortReservationKm: 7,
     longRideNoTimeKm: 15,
     isActive: true,
   },
   {
-    id: "10000000000000002",
     name: "Van",
-    description: "Van / taxibusje, hoger reserveringstarief.",
-    imageUrl: "/images/van.svg",
-    seats: 8,
-    luggage: 4,
-    baseFare: 8.77,
+    description: "Groups - Mercedes-Benz V-Class or similar",
+    imageUrl: "r2p-van-class.png",
+    seats: 7,
+    luggage: 6,
     pricePerKm: 3,
     pricePerMin: 0.65,
+    baseFare: 8.77,
     minimumReservationFare: 30,
     shortReservationKm: 7,
     longRideNoTimeKm: 15,
@@ -36,28 +47,41 @@ const CAR_TYPES = [
   },
 ];
 
-async function main() {
+async function seedCarTypes() {
   for (const carType of CAR_TYPES) {
-    await prisma.carType.upsert({
-      where: { id: carType.id },
-      update: {
-        name: carType.name,
-        description: carType.description,
-        imageUrl: carType.imageUrl,
-        seats: carType.seats,
-        luggage: carType.luggage,
-        baseFare: carType.baseFare,
-        pricePerKm: carType.pricePerKm,
-        pricePerMin: carType.pricePerMin,
-        minimumReservationFare: carType.minimumReservationFare,
-        shortReservationKm: carType.shortReservationKm,
-        longRideNoTimeKm: carType.longRideNoTimeKm,
-        isActive: carType.isActive,
+    // `name` is not unique, so we use it only for idempotency (create if missing, update if present).
+    const existing = await prisma.carType.findFirst({
+      where: { name: carType.name },
+    });
+
+    if (existing) {
+      await prisma.carType.update({
+        where: { id: existing.id },
+        data: carType,
+      });
+      continue;
+    }
+
+    await prisma.carType.create({
+      data: {
+        id: SnowFlake.generate(),
+        ...carType,
       },
-      create: carType,
     });
   }
-  console.log("Seed: CarTypes (Comfort, Van) upserted.");
+
+  // Ensure only the seeded car types are active (important when names changed, e.g. Comfort -> Standard).
+  const allowedNames = CAR_TYPES.map((c) => c.name);
+  await prisma.carType.updateMany({
+    where: { name: { notIn: allowedNames } },
+    data: { isActive: false },
+  });
+
+  console.log("Seed: CarTypes upserted.");
+}
+
+async function main() {
+  await seedCarTypes();
 }
 
 main()
